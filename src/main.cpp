@@ -1,24 +1,76 @@
 #include <Arduino.h>
 #include <LGFX_ATM0130B3.h>
 #include <Scd4x.hpp>
+#include <WiFi.h>
+#include <HTTPClient.h>
+
+#ifndef SSID
+#define SSID "your_wifi_ssid"
+#endif
+
+#ifndef PASSWORD
+#define PASSWORD "your_wifi_password"
+#endif
+
+// const char* serverUrl = "http://192.168.1.91:3002/data";
+const char* serverUrl = "http://192.168.1.46:3002/data";
 
 static MySCD4X sensor;
 static LGFX lcd;
 
 static LGFX_Sprite sprite(&lcd);
+static LGFX_Sprite sprite_network(&lcd);
+const int network_area_height = 30;
 
 void setup() {
   Serial.begin(115200);
+  
   sensor.setup();
   lcd.begin();
   lcd.setRotation(1);
   lcd.fillScreen(lcd.color565(0, 0, 0));
-
+  
   sprite.setColorDepth(8);
-  sprite.createSprite(lcd.width(), lcd.height());
+  sprite.createSprite(lcd.width(), lcd.height()-network_area_height);
   sprite.setBaseColor(lcd.color888(0, 0, 0));
   sprite.setTextColor(lcd.color888(255, 255, 255));
-  
+
+  sprite_network.setColorDepth(8);
+  sprite_network.createSprite(lcd.width(), network_area_height);
+  sprite_network.setBaseColor(lcd.color888(0, 0, 0));
+  sprite_network.setTextColor(lcd.color888(255, 255, 255));
+
+  lcd.println("Connecting to WiFi");
+  WiFi.begin(SSID, PASSWORD);
+  while(WiFi.status() != WL_CONNECTED){
+    delay(500);
+    lcd.print(".");
+  }
+  lcd.println("\nConnected!");
+}
+
+void sendDataToServer(String co2, String temp, String humid) {
+  sprite_network.setCursor(0, 5);
+  if(WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(serverUrl);
+    http.addHeader("Content-Type", "application/json");
+
+    String payload = "{\"co2\": \"" + co2 + "\", \"temperature\": \"" + temp + "\", \"humidity\": \"" + humid + "\"}";
+    
+    int httpResponseCode = http.POST(payload);
+    
+    if(httpResponseCode > 0) {
+      String response = http.getString();
+      sprite_network.println("Response: " + response);
+    } else {
+      sprite_network.println("Error on sending POST: " + String(httpResponseCode));
+    }
+    
+    http.end();
+  } else {
+    sprite_network.println("WiFi not connected");
+  }
 
 }
 
@@ -37,13 +89,11 @@ void drawData(int x, int y, String label, String value, String unit) {
   if (value_len > max_value_len) {
     value = value.substring(0, max_value_len);
   } else if (value_len < max_value_len) {
-    String padding = String(':', max_value_len - value_len);
-    String value_new = padding + value;
-    sprite.setCursor(x + 20, y-10);
-    sprite.print(value_new);
+    String padding = "";
+    for(int i = 0; i < (max_value_len - value_len); i++)
+      padding += " ";
+    value = padding + value;
   }
-  sprite.setCursor(x,y-10);
-  sprite.print(value_len);
 
   sprite.setCursor(x, y+10);
   sprite.setTextSize(label_size);
@@ -61,6 +111,30 @@ void drawData(int x, int y, String label, String value, String unit) {
   sprite.print(unit);
 }
 
+int getSignalBars(long rssi) {
+  if (rssi > -50) return 4;
+  else if (rssi > -60) return 3;
+  else if (rssi > -70) return 2;
+  else if (rssi > -80) return 1;
+  else return 0;
+}
+
+void drawSignalBars(){
+  long rssi = WiFi.RSSI();
+  int bars = getSignalBars(rssi);
+  sprite_network.drawLine(0, 0, sprite_network.width(), 0, TFT_WHITE);
+  // アンテナ棒を描画
+  for (int i = 0; i < 4; i++) {
+    int x = sprite_network.width() - 50 + i * 10;
+    int h = (i+1) * 5;
+    if (i < bars) {
+      sprite_network.fillRect(x, 30-h, 5, h, TFT_WHITE); // 塗りつぶし
+    } else {
+      sprite_network.drawRect(x, 30-h, 5, h, TFT_WHITE); // 枠だけ
+    }
+  }
+}
+
 void loop() {
   uint16_t co2Concentration;
   float temperature;
@@ -69,11 +143,18 @@ void loop() {
   
   sprite.clear();
 
-  drawData(0, 50, "CO2", String(co2Concentration), "ppm");
-  drawData(0, 110, "Temp", String(temperature), "'C");
-  drawData(0, 170, "Humid", String(relativeHumidity), "%");
+  drawData(0, 35, "CO2", String(co2Concentration), "ppm");
+  drawData(0, 95, "Temp", String(temperature), "'C");
+  drawData(0, 155, "Humid", String(relativeHumidity), "%");
 
   sprite.pushSprite(0, 0);
 
-  delay(1000);
+  sprite_network.clear();
+
+  sendDataToServer(String(co2Concentration), String(temperature), String(relativeHumidity));
+  drawSignalBars();
+
+  sprite_network.pushSprite(0, lcd.height() - network_area_height);
+
+  delay(10*60*1000);
 }
