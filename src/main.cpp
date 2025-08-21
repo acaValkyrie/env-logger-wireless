@@ -3,17 +3,10 @@
 #include <Scd4x.hpp>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <wifi_credidential.h>
 
-#ifndef SSID
-#define SSID "your_wifi_ssid"
-#endif
-
-#ifndef PASSWORD
-#define PASSWORD "your_wifi_password"
-#endif
-
-// const char* serverUrl = "http://192.168.1.91:3002/data";
-const char* serverUrl = "http://192.168.1.46:3002/data";
+const char* serverUrl = "http://192.168.1.91:3002/api/env_sensor";
+// const char* serverUrl = "http://192.168.1.46:3002/data";
 
 static MySCD4X sensor;
 static LGFX lcd;
@@ -23,8 +16,6 @@ static LGFX_Sprite sprite_network(&lcd);
 const int network_area_height = 30;
 
 void setup() {
-  Serial.begin(115200);
-  
   sensor.setup();
   lcd.begin();
   lcd.setRotation(1);
@@ -40,13 +31,22 @@ void setup() {
   sprite_network.setBaseColor(lcd.color888(0, 0, 0));
   sprite_network.setTextColor(lcd.color888(255, 255, 255));
 
+  lcd.setTextSize(3);
   lcd.println("Connecting to WiFi");
-  WiFi.begin(SSID, PASSWORD);
-  while(WiFi.status() != WL_CONNECTED){
+  WiFi.begin(MY_WIFI_SSID, MY_WIFI_PASSWORD);
+  const int maxRetries = 10;
+  int retries = 0;
+  while(WiFi.status() != WL_CONNECTED && retries < maxRetries){
     delay(500);
     lcd.print(".");
+    retries++;
   }
-  lcd.println("\nConnected!");
+  if (WiFi.status() == WL_CONNECTED) {
+    lcd.println("\nConnected!");
+  } else {
+    lcd.println("\nFailed to connect");
+    esp_deep_sleep(10 * 60 * 1000000);
+  }
 }
 
 void sendDataToServer(String co2, String temp, String humid) {
@@ -70,6 +70,7 @@ void sendDataToServer(String co2, String temp, String humid) {
     http.end();
   } else {
     sprite_network.println("WiFi not connected");
+    esp_deep_sleep(10 * 60 * 1000000); // Sleep for 10 minutes if WiFi is not connected
   }
 
 }
